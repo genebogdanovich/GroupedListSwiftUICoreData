@@ -9,72 +9,92 @@ import SwiftUI
 import CoreData
 
 struct ContentView: View {
-    @Environment(\.managedObjectContext) private var viewContext
-
-    @FetchRequest(
-        sortDescriptors: [NSSortDescriptor(keyPath: \Item.timestamp, ascending: true)],
-        animation: .default)
-    private var items: FetchedResults<Item>
-
+    @Environment(\.managedObjectContext) private var moc
+    @FetchRequest(entity: TodoSection.entity(), sortDescriptors: [
+        NSSortDescriptor(keyPath: \TodoSection.date, ascending: false)
+    ]) private var sections: FetchedResults<TodoSection>
+    @State private var date = Date()
+    
+    private let dateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .short
+        
+        return formatter
+    }()
+    
     var body: some View {
-        List {
-            ForEach(items) { item in
-                Text("Item at \(item.timestamp!, formatter: itemFormatter)")
+        VStack {
+            List {
+                ForEach(sections, id: \.name) { section in
+                    Section(header: Text(section.name!)) {
+                        ForEach(section.todosArrayProxy) { todo in
+                            HStack {
+                                Text(todo.title!)
+                                Text("\(todo.date!, formatter: dateFormatter)")
+                            }
+                        }
+                        .onDelete { offsets in
+                            offsets.forEach { (index) in
+                                let todo = section.todosArrayProxy[index]
+                                
+                                // If deleting the last todo in section, clean up that section.
+                                if (section.todosArrayProxy.count == 1) {
+                                    moc.delete(section)
+                                }
+                                moc.delete(todo)
+                            }
+                        }
+                    }
+                }
             }
-            .onDelete(perform: deleteItems)
-        }
-        .toolbar {
-            #if os(iOS)
-            EditButton()
-            #endif
-
-            Button(action: addItem) {
-                Label("Add Item", systemImage: "plus")
+            
+            Form {
+                DatePicker(selection: $date, in: ...Date(), displayedComponents: .date) {
+                    Text("Date")
+                }
             }
-        }
-    }
-
-    private func addItem() {
-        withAnimation {
-            let newItem = Item(context: viewContext)
-            newItem.timestamp = Date()
-
-            do {
-                try viewContext.save()
-            } catch {
-                // Replace this implementation with code to handle the error appropriately.
-                // fatalError() causes the application to generate a crash log and terminate. You should not use this function in a shipping application, although it may be useful during development.
-                let nsError = error as NSError
-                fatalError("Unresolved error \(nsError), \(nsError.userInfo)")
-            }
-        }
-    }
-
-    private func deleteItems(offsets: IndexSet) {
-        withAnimation {
-            offsets.map { items[$0] }.forEach(viewContext.delete)
-
-            do {
-                try viewContext.save()
-            } catch {
-                // Replace this implementation with code to handle the error appropriately.
-                // fatalError() causes the application to generate a crash log and terminate. You should not use this function in a shipping application, although it may be useful during development.
-                let nsError = error as NSError
-                fatalError("Unresolved error \(nsError), \(nsError.userInfo)")
-            }
+            
+            Button(action: {
+                let newTodo = Todo(context: moc)
+                newTodo.title = String(Int.random(in: 0 ..< 100))
+                newTodo.date = date
+                newTodo.id = UUID()
+                
+                // Use Find or Create pattern for TodoSection.
+                let sectionName = dateFormatter.string(from: date)
+                let sectionFetch: NSFetchRequest<TodoSection> = TodoSection.fetchRequest()
+                sectionFetch.predicate = NSPredicate(format: "%K == %@", #keyPath(TodoSection.name), sectionName)
+                
+                let results = try! moc.fetch(sectionFetch)
+                
+                if results.isEmpty {
+                    // Section not found, create new section.
+                    let newSection = TodoSection(context: moc)
+                    newSection.name = sectionName
+                    newSection.date = date
+                    newSection.addToTodos(newTodo)
+                } else {
+                    // Section found, use it.
+                    let existingSection = results.first!
+                    existingSection.addToTodos(newTodo)
+                }
+                
+                try! moc.save()
+            }, label: {
+                Text("Add new todo")
+            })
         }
     }
 }
 
-private let itemFormatter: DateFormatter = {
-    let formatter = DateFormatter()
-    formatter.dateStyle = .short
-    formatter.timeStyle = .medium
-    return formatter
-}()
+extension TodoSection {
+    var todosArrayProxy: [Todo] {
+        (todos as? Set<Todo> ?? []).sorted()
+    }
+}
 
-struct ContentView_Previews: PreviewProvider {
-    static var previews: some View {
-        ContentView().environment(\.managedObjectContext, PersistenceController.preview.container.viewContext)
+extension Todo: Comparable {
+    public static func < (lhs: Todo, rhs: Todo) -> Bool {
+        lhs.title! < rhs.title!
     }
 }

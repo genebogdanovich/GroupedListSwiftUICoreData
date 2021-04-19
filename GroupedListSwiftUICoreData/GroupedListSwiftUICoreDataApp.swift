@@ -9,12 +9,27 @@ import SwiftUI
 
 @main
 struct GroupedListSwiftUICoreDataApp: App {
-    let persistenceController = PersistenceController.shared
-
+    @Environment(\.scenePhase) private var scenePhase
+    private let persistenceController = PersistenceController.shared
+    
     var body: some Scene {
         WindowGroup {
             ContentView()
                 .environment(\.managedObjectContext, persistenceController.container.viewContext)
+        }
+        .onChange(of: scenePhase) { (newPhase) in
+            switch newPhase {
+            case .active:
+                #if DEBUG
+                UserDefaults.standard.set(false, forKey: "_UIConstraintBasedLayoutLogUnsatisfiable")
+                #endif
+            case .inactive:
+                break
+            case .background:
+                try! persistenceController.container.viewContext.save()
+            @unknown default:
+                break
+            }
         }
     }
 }
